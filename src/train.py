@@ -9,6 +9,8 @@ import pandas as pd
 from mlflow.models import infer_signature
 import sys
 import traceback
+import joblib
+
 
 print(f"--- Debug: Initial CWD: {os.getcwd()} ---")
 
@@ -102,6 +104,17 @@ try:
             artifact_path="model"
         )
         print(f"✅ Modelo registrado correctamente. MSE: {mse:.4f}")
+        
+        mlflow.sklearn.log_model(
+            sk_model=model,
+            artifact_path="model"
+        )
+        print(f"✅ Modelo registrado correctamente. MSE: {mse:.4f}")
+        
+        # Guardar modelo en la raíz para el paso de validación
+        model_path = os.path.join(workspace_dir, "model.pkl")
+        joblib.dump(model, model_path)
+        print(f"✅ Modelo guardado en: {model_path}")
 
 except Exception as e:
     print(f"\n--- ERROR durante la ejecución de MLflow ---")
