@@ -8,8 +8,8 @@ import sys
 import os
 
 # --- Umbrales de Validación ---
-ACCURACY_THRESHOLD = 0.85  # Mínimo 85% de accuracy
-F1_THRESHOLD = 0.85  # Mínimo 85% de F1-score
+ACCURACY_THRESHOLD = 0.95  # Mínimo 85% de accuracy
+F1_THRESHOLD = 0.95  # Mínimo 85% de F1-score
 
 print("=" * 60)
 print("VALIDATION STEP - Wine Classification Model")
