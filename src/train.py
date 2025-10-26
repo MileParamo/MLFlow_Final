@@ -1,131 +1,198 @@
 import os
 import mlflow
 import mlflow.sklearn
-from sklearn.datasets import load_diabetes
-from sklearn.linear_model import LinearRegression
+from sklearn.datasets import load_wine
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import pandas as pd
+import numpy as np
 from mlflow.models import infer_signature
 import sys
 import traceback
 import joblib
-
+import json
 
 print(f"--- Debug: Initial CWD: {os.getcwd()} ---")
 
 # --- Define Paths ---
-# Usar rutas absolutas dentro del workspace del runner
-workspace_dir = os.getcwd() # Debería ser /home/runner/work/mlflow-deploy/mlflow-deploy
+workspace_dir = os.getcwd()
 mlruns_dir = os.path.join(workspace_dir, "mlruns")
 tracking_uri = "file://" + os.path.abspath(mlruns_dir)
-# Definir explícitamente la ubicación base deseada para los artefactos
 artifact_location = "file://" + os.path.abspath(mlruns_dir)
 
 print(f"--- Debug: Workspace Dir: {workspace_dir} ---")
 print(f"--- Debug: MLRuns Dir: {mlruns_dir} ---")
 print(f"--- Debug: Tracking URI: {tracking_uri} ---")
-print(f"--- Debug: Desired Artifact Location Base: {artifact_location} ---")
+print(f"--- Debug: Artifact Location Base: {artifact_location} ---")
 
-# --- Asegurar que el directorio MLRuns exista ---
+# --- Ensure MLRuns directory exists ---
 os.makedirs(mlruns_dir, exist_ok=True)
 
-# --- Configurar MLflow ---
+# --- Configure MLflow ---
 mlflow.set_tracking_uri(tracking_uri)
 
-# --- Crear o Establecer Experimento Explícitamente con Artifact Location ---
-experiment_name = "CI-CD-Lab2"
-experiment_id = None # Inicializar variable
+# --- Create or Set Experiment ---
+experiment_name = "Wine-Classification-Pipeline"
+experiment_id = None
+
 try:
-    # Intentar crear el experimento, proporcionando la ubicación del artefacto
     experiment_id = mlflow.create_experiment(
         name=experiment_name,
-        artifact_location=artifact_location # ¡Forzar la ubicación aquí!
+        artifact_location=artifact_location
     )
-    print(f"--- Debug: Creado Experimento '{experiment_name}' con ID: {experiment_id} ---")
+    print(f"--- Debug: Created Experiment '{experiment_name}' with ID: {experiment_id} ---")
 except mlflow.exceptions.MlflowException as e:
     if "RESOURCE_ALREADY_EXISTS" in str(e):
-        print(f"--- Debug: Experimento '{experiment_name}' ya existe. Obteniendo ID. ---")
-        # Obtener el experimento existente para conseguir su ID
+        print(f"--- Debug: Experiment '{experiment_name}' already exists. Getting ID. ---")
         experiment = mlflow.get_experiment_by_name(experiment_name)
         if experiment:
             experiment_id = experiment.experiment_id
-            print(f"--- Debug: ID del Experimento Existente: {experiment_id} ---")
-            print(f"--- Debug: Ubicación de Artefacto del Experimento Existente: {experiment.artifact_location} ---")
-            # Opcional: Verificar si la ubicación del artefacto es la correcta
-            if experiment.artifact_location != artifact_location:
-                 print(f"--- WARNING: La ubicación del artefacto del experimento existente ('{experiment.artifact_location}') NO coincide con la deseada ('{artifact_location}')! ---")
+            print(f"--- Debug: Existing Experiment ID: {experiment_id} ---")
+            print(f"--- Debug: Existing Artifact Location: {experiment.artifact_location} ---")
         else:
-            # Esto no debería ocurrir si RESOURCE_ALREADY_EXISTS fue el error
-            print(f"--- ERROR: No se pudo obtener el experimento existente '{experiment_name}' por nombre. ---")
+            print(f"--- ERROR: Could not get experiment '{experiment_name}' by name. ---")
             sys.exit(1)
     else:
-        print(f"--- ERROR creando/obteniendo experimento: {e} ---")
-        raise e # Relanzar otros errores
+        print(f"--- ERROR creating/getting experiment: {e} ---")
+        raise e
 
-# Asegurarse de que tenemos un experiment_id válido
 if experiment_id is None:
-    print(f"--- ERROR FATAL: No se pudo obtener un ID de experimento válido para '{experiment_name}'. ---")
+    print(f"--- FATAL ERROR: Could not obtain valid experiment ID for '{experiment_name}'. ---")
     sys.exit(1)
 
-# --- Cargar Datos y Entrenar Modelo ---
-X, y = load_diabetes(return_X_y=True)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-model = LinearRegression()
-model.fit(X_train, y_train)
-preds = model.predict(X_test)
-mse = mean_squared_error(y_test, preds)
+# --- Load Data and Train Model ---
+print("--- Loading Wine dataset ---")
+wine_data = load_wine()
+X, y = wine_data.data, wine_data.target
+feature_names = wine_data.feature_names
+target_names = wine_data.target_names
 
-# --- Iniciar Run de MLflow ---
-print(f"--- Debug: Iniciando run de MLflow en Experimento ID: {experiment_id} ---") # Añadir ID aquí
+print(f"Dataset shape: {X.shape}")
+print(f"Number of classes: {len(target_names)}")
+print(f"Classes: {target_names}")
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# --- Hyperparameters ---
+n_estimators = 100
+max_depth = 10
+random_state = 42
+
+print(f"--- Training Random Forest with n_estimators={n_estimators}, max_depth={max_depth} ---")
+model = RandomForestClassifier(
+    n_estimators=n_estimators,
+    max_depth=max_depth,
+    random_state=random_state
+)
+model.fit(X_train, y_train)
+
+# --- Predictions and Metrics ---
+y_pred = model.predict(X_test)
+y_pred_proba = model.predict_proba(X_test)
+
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred, average='weighted')
+recall = recall_score(y_test, y_pred, average='weighted')
+f1 = f1_score(y_test, y_pred, average='weighted')
+conf_matrix = confusion_matrix(y_test, y_pred)
+
+print(f"\n--- Model Performance ---")
+print(f"Accuracy: {accuracy:.4f}")
+print(f"Precision: {precision:.4f}")
+print(f"Recall: {recall:.4f}")
+print(f"F1-Score: {f1:.4f}")
+print(f"Confusion Matrix:\n{conf_matrix}")
+
+# --- Feature Importance ---
+feature_importance = pd.DataFrame({
+    'feature': feature_names,
+    'importance': model.feature_importances_
+}).sort_values('importance', ascending=False)
+
+print(f"\n--- Top 5 Most Important Features ---")
+print(feature_importance.head())
+
+# --- Start MLflow Run ---
+print(f"\n--- Debug: Starting MLflow run in Experiment ID: {experiment_id} ---")
 run = None
+
 try:
-    # Iniciar el run PASANDO EXPLÍCITAMENTE el experiment_id
-    with mlflow.start_run(experiment_id=experiment_id) as run: # <--- CAMBIO CLAVE
+    with mlflow.start_run(experiment_id=experiment_id) as run:
         run_id = run.info.run_id
         actual_artifact_uri = run.info.artifact_uri
         print(f"--- Debug: Run ID: {run_id} ---")
-        print(f"--- Debug: URI Real del Artefacto del Run: {actual_artifact_uri} ---")
+        print(f"--- Debug: Artifact URI: {actual_artifact_uri} ---")
 
-        # Comprobar si coincide con el patrón esperado basado en artifact_location del experimento
-        # (La artifact_uri del run incluirá el run_id)
-        expected_artifact_uri_base = os.path.join(artifact_location, run_id, "artifacts")
-        if actual_artifact_uri != expected_artifact_uri_base:
-             print(f"--- WARNING: La URI del Artefacto del Run '{actual_artifact_uri}' no coincide exactamente con la esperada '{expected_artifact_uri_base}' (esto puede ser normal si la estructura difiere ligeramente). Lo importante es que NO sea la ruta local incorrecta. ---")
-        if "/home/manuelcastiblan/" in actual_artifact_uri:
-             print(f"--- ¡¡¡ERROR CRÍTICO!!!: La URI del Artefacto del Run '{actual_artifact_uri}' TODAVÍA contiene la ruta local incorrecta! ---")
+        # Log parameters
+        mlflow.log_param("n_estimators", n_estimators)
+        mlflow.log_param("max_depth", max_depth)
+        mlflow.log_param("random_state", random_state)
+        mlflow.log_param("test_size", 0.2)
 
+        # Log metrics
+        mlflow.log_metric("accuracy", accuracy)
+        mlflow.log_metric("precision", precision)
+        mlflow.log_metric("recall", recall)
+        mlflow.log_metric("f1_score", f1)
 
-        mlflow.log_metric("mse", mse)
-        print(f"--- Debug: Intentando log_model con artifact_path='model' ---")
+        # Log confusion matrix as artifact
+        conf_matrix_path = os.path.join(workspace_dir, "confusion_matrix.txt")
+        np.savetxt(conf_matrix_path, conf_matrix, fmt='%d')
+        mlflow.log_artifact(conf_matrix_path)
 
+        # Log feature importance as artifact
+        feature_importance_path = os.path.join(workspace_dir, "feature_importance.csv")
+        feature_importance.to_csv(feature_importance_path, index=False)
+        mlflow.log_artifact(feature_importance_path)
+
+        # Infer signature
+        signature = infer_signature(X_train, y_pred)
+
+        # Log model
+        print(f"--- Debug: Logging model with artifact_path='model' ---")
         mlflow.sklearn.log_model(
             sk_model=model,
-            artifact_path="model"
+            artifact_path="model",
+            signature=signature,
+            input_example=X_train[:5]
         )
-        print(f"✅ Modelo registrado correctamente. MSE: {mse:.4f}")
-        
-        mlflow.sklearn.log_model(
-            sk_model=model,
-            artifact_path="model"
-        )
-        print(f"✅ Modelo registrado correctamente. MSE: {mse:.4f}")
-        
-        # Guardar modelo en la raíz para el paso de validación
+
+        print(f"\n✅ Model registered successfully in MLflow!")
+        print(f"✅ Run ID: {run_id}")
+        print(f"✅ Accuracy: {accuracy:.4f}")
+        print(f"✅ F1-Score: {f1:.4f}")
+
+        # Save model locally for validation step
         model_path = os.path.join(workspace_dir, "model.pkl")
         joblib.dump(model, model_path)
-        print(f"✅ Modelo guardado en: {model_path}")
+        print(f"✅ Model saved locally at: {model_path}")
+
+        # Save metrics for validation
+        metrics_dict = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1
+        }
+        metrics_path = os.path.join(workspace_dir, "metrics.json")
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics_dict, f, indent=2)
+        print(f"✅ Metrics saved at: {metrics_path}")
 
 except Exception as e:
-    print(f"\n--- ERROR durante la ejecución de MLflow ---")
+    print(f"\n--- ERROR during MLflow execution ---")
     traceback.print_exc()
-    print(f"--- Fin de la Traza de Error ---")
-    print(f"CWD actual en el error: {os.getcwd()}")
-    print(f"Tracking URI usada: {mlflow.get_tracking_uri()}")
-    print(f"Experiment ID intentado: {experiment_id}") # Añadir ID aquí
+    print(f"--- End of Error Trace ---")
+    print(f"Current CWD on error: {os.getcwd()}")
+    print(f"Tracking URI used: {mlflow.get_tracking_uri()}")
+    print(f"Experiment ID attempted: {experiment_id}")
     if run:
-         print(f"URI del Artefacto del Run en el error: {run.info.artifact_uri}")
+        print(f"Run Artifact URI on error: {run.info.artifact_uri}")
     else:
-         print("El objeto Run no se creó con éxito.")
+        print("Run object was not created successfully.")
     sys.exit(1)
-    
+
+print("\n--- Training pipeline completed successfully! ---")

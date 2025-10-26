@@ -1,62 +1,121 @@
-# src/validate.py
 import joblib
 import pandas as pd
-from sklearn.metrics import mean_squared_error
+import json
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
-from sklearn.datasets import load_diabetes  # Importar load_diabetes
+from sklearn.datasets import load_wine
 import sys
 import os
 
-# Parámetro de umbral
-THRESHOLD = 5000.0  # Ajusta este umbral según el MSE esperado para load_diabetes
+# --- Umbrales de Validación ---
+ACCURACY_THRESHOLD = 0.85  # Mínimo 85% de accuracy
+F1_THRESHOLD = 0.85  # Mínimo 85% de F1-score
+
+print("=" * 60)
+print("VALIDATION STEP - Wine Classification Model")
+print("=" * 60)
 
 # --- Cargar el MISMO dataset que en train.py ---
-print("--- Debug: Cargando dataset load_diabetes ---")
-X, y = load_diabetes(return_X_y=True, as_frame=True)  # Usar as_frame=True si quieres DataFrames
+print("\n--- Loading Wine dataset ---")
+wine_data = load_wine()
+X, y = wine_data.data, wine_data.target
 
-# División de datos (usar los mismos datos que en entrenamiento no es ideal para validación real,
-# pero necesario aquí para que las dimensiones coincidan. Idealmente, tendrías un split dedicado
-# o usarías el X_test guardado del entrenamiento si fuera posible)
-# Para este ejemplo, simplemente re-dividimos para obtener un X_test con 10 features.
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)  # Añadir random_state para consistencia si es necesario
-print(f"--- Debug: Dimensiones de X_test: {X_test.shape} ---")  # Debería ser (n_samples, 10)
+# División de datos (misma semilla que en train.py para consistencia)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+print(f"--- Debug: X_test dimensions: {X_test.shape} ---")
+print(f"--- Debug: Number of test samples: {len(y_test)} ---")
 
 # --- Cargar modelo previamente entrenado ---
 model_filename = "model.pkl"
 model_path = os.path.abspath(os.path.join(os.getcwd(), model_filename))
-print(f"--- Debug: Intentando cargar modelo desde: {model_path} ---")
+print(f"\n--- Debug: Loading model from: {model_path} ---")
 
 try:
     model = joblib.load(model_path)
+    print(f"✅ Model loaded successfully")
+    print(f"   Model type: {type(model).__name__}")
+    print(f"   Expected features: {model.n_features_in_}")
 except FileNotFoundError:
-    print(f"--- ERROR: No se encontró el archivo del modelo en '{model_path}'. Asegúrate de que el paso 'make train' lo haya guardado correctamente en la raíz del proyecto. ---")
-    # Listar archivos en el directorio actual para depuración
-    print(f"--- Debug: Archivos en {os.getcwd()}: ---")
+    print(f"❌ ERROR: Model file not found at '{model_path}'")
+    print(f"   Make sure the 'train' step saved it correctly in the project root.")
+    print(f"\n--- Debug: Files in {os.getcwd()}: ---")
     try:
-        print(os.listdir(os.getcwd()))
+        files = os.listdir(os.getcwd())
+        for f in files:
+            print(f"   - {f}")
     except Exception as list_err:
-        print(f"(No se pudo listar el directorio: {list_err})")
-    print("---")
-    sys.exit(1)  # Salir con error
-
-# --- Predicción y Validación ---
-print("--- Debug: Realizando predicciones ---")
-try:
-    y_pred = model.predict(X_test)  # Ahora X_test tiene 10 features
-except ValueError as pred_err:
-    print(f"--- ERROR durante la predicción: {pred_err} ---")
-    # Imprimir información de características si el error persiste
-    print(f"Modelo esperaba {model.n_features_in_} features.")
-    print(f"X_test tiene {X_test.shape[1]} features.")
+        print(f"   (Could not list directory: {list_err})")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ ERROR loading model: {e}")
     sys.exit(1)
 
-mse = mean_squared_error(y_test, y_pred)
-print(f"🔍 MSE del modelo: {mse:.4f} (umbral: {THRESHOLD})")
+# --- Cargar métricas guardadas (opcional, para comparación) ---
+metrics_filename = "metrics.json"
+metrics_path = os.path.join(os.getcwd(), metrics_filename)
+saved_metrics = None
 
-# Validación
-if mse <= THRESHOLD:
-    print("✅ El modelo cumple los criterios de calidad.")
-    sys.exit(0)  # éxito
+if os.path.exists(metrics_path):
+    try:
+        with open(metrics_path, 'r') as f:
+            saved_metrics = json.load(f)
+        print(f"\n--- Metrics from training: ---")
+        print(f"   Training Accuracy: {saved_metrics.get('accuracy', 'N/A'):.4f}")
+        print(f"   Training F1-Score: {saved_metrics.get('f1_score', 'N/A'):.4f}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not load metrics.json: {e}")
+
+# --- Predicción y Validación ---
+print(f"\n--- Performing predictions on test set ---")
+try:
+    y_pred = model.predict(X_test)
+    print(f"✅ Predictions completed successfully")
+except ValueError as pred_err:
+    print(f"❌ ERROR during prediction: {pred_err}")
+    print(f"   Model expected {model.n_features_in_} features")
+    print(f"   X_test has {X_test.shape[1]} features")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Unexpected error during prediction: {e}")
+    sys.exit(1)
+
+# --- Calcular métricas en el conjunto de prueba ---
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print(f"\n{'=' * 60}")
+print(f"VALIDATION RESULTS")
+print(f"{'=' * 60}")
+print(f"🔍 Model Accuracy:  {accuracy:.4f} (threshold: {ACCURACY_THRESHOLD})")
+print(f"🔍 Model F1-Score:  {f1:.4f} (threshold: {F1_THRESHOLD})")
+print(f"{'=' * 60}")
+
+# --- Validación contra umbrales ---
+passed_accuracy = accuracy >= ACCURACY_THRESHOLD
+passed_f1 = f1 >= F1_THRESHOLD
+
+print(f"\n--- Quality Check Results ---")
+print(f"   Accuracy Check: {'✅ PASSED' if passed_accuracy else '❌ FAILED'}")
+print(f"   F1-Score Check: {'✅ PASSED' if passed_f1 else '❌ FAILED'}")
+
+# --- Decisión final ---
+if passed_accuracy and passed_f1:
+    print(f"\n{'=' * 60}")
+    print(f"✅ SUCCESS: Model meets all quality criteria!")
+    print(f"{'=' * 60}")
+    sys.exit(0)
 else:
-    print("❌ El modelo no cumple el umbral. Deteniendo pipeline.")
-    sys.exit(1)  # error
+    print(f"\n{'=' * 60}")
+    print(f"❌ FAILURE: Model does not meet quality thresholds.")
+    print(f"   Pipeline stopped.")
+    print(f"{'=' * 60}")
+    
+    # Detalles adicionales del fallo
+    if not passed_accuracy:
+        print(f"\n   Accuracy {accuracy:.4f} is below threshold {ACCURACY_THRESHOLD}")
+    if not passed_f1:
+        print(f"   F1-Score {f1:.4f} is below threshold {F1_THRESHOLD}")
+    
+    sys.exit(1)
